@@ -58,7 +58,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(*CreateOptions) error) *cobra.Co
 			Gists can be created from one or multiple files. Alternatively, pass "-" as
 			file name to read from standard input.
 
-			By default, gists are private; use '--public' to make publicly listed ones.
+			By default, gists are secret; use '--public' to make publicly listed ones.
 		`),
 		Example: heredoc.Doc(`
 			# publish file 'hello.py' as a public gist
@@ -97,7 +97,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(*CreateOptions) error) *cobra.Co
 
 	cmd.Flags().StringVarP(&opts.Description, "desc", "d", "", "A description for this gist")
 	cmd.Flags().BoolVarP(&opts.WebMode, "web", "w", false, "Open the web browser with created gist")
-	cmd.Flags().BoolVarP(&opts.Public, "public", "p", false, "List the gist publicly (default: private)")
+	cmd.Flags().BoolVarP(&opts.Public, "public", "p", false, "List the gist publicly (default: secret)")
 	cmd.Flags().StringVarP(&opts.FilenameOverride, "filename", "f", "", "Provide a filename to be used when reading from STDIN")
 	return cmd
 }
@@ -151,7 +151,13 @@ func createRun(opts *CreateOptions) error {
 		var httpError api.HTTPError
 		if errors.As(err, &httpError) {
 			if httpError.OAuthScopes != "" && !strings.Contains(httpError.OAuthScopes, "gist") {
-				return fmt.Errorf("This command requires the 'gist' OAuth scope.\nPlease re-authenticate by doing `gh config set -h github.com oauth_token ''` and running the command again.")
+				return fmt.Errorf("This command requires the 'gist' OAuth scope.\nPlease re-authenticate with:  gh auth refresh -h %s -s gist", host)
+			}
+			if httpError.StatusCode == http.StatusUnprocessableEntity {
+				if detectEmptyFiles(files) {
+					fmt.Fprintf(errOut, "%s Failed to create gist: %s\n", cs.FailureIcon(), "a gist file cannot be blank")
+					return cmdutil.SilentError
+				}
 			}
 		}
 		return fmt.Errorf("%s Failed to create gist: %w", cs.Red("X"), err)
@@ -265,4 +271,13 @@ func createGist(client *http.Client, hostname, description string, public bool, 
 	}
 
 	return &result, nil
+}
+
+func detectEmptyFiles(files map[string]*shared.GistFile) bool {
+	for _, file := range files {
+		if strings.TrimSpace(file.Content) == "" {
+			return true
+		}
+	}
+	return false
 }
